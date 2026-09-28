@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  index.html: |
+    <html>
+    <body>
+      <h1>Anuj's Demo K8s Application</h1>
+      <p>Running on Kind Kubernetes Cluster</p>
+      <p>Persistent storage is enabled.</p>
+    </body>
+    </html>
