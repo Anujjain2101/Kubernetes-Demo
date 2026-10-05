@@ -110,13 +110,38 @@ The lab expanded to a second application:
 
 This introduced the concept of application routing and layered traffic flow in Kubernetes.
 
-### 7) RBAC (Role and ClusterRole)
+### 7) ServiceAccount and RBAC (Role and ClusterRole)
 
-The RBAC manifests define which identities can read pod information:
+A ServiceAccount is the identity used by applications, automation, and internal workloads running inside the cluster.
+
+Example workflow used in this lab:
+
+```bash
+kubectl create serviceaccount dev-reader
+kubectl create token dev-reader
+```
+
+This creates a service account named `dev-reader` and generates a token that can be used for authentication.
+
+The RBAC manifests then define which identities can read pod information:
 - `role.yaml` and `rolebinding.yaml` apply within a namespace
 - `clusterrole.yaml` and `clusterrolebinding.yaml` apply cluster-wide
 
-This demonstrates how Kubernetes authorization is enforced through RBAC rules.
+`RoleBinding` connects a Role to a ServiceAccount. In other words, the ServiceAccount gets permissions described by the Role when the binding exists.
+
+Example:
+
+```yaml
+subjects:
+  - kind: ServiceAccount
+    name: dev-reader
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+This means: the `dev-reader` ServiceAccount is allowed to perform the actions defined in the `pod-reader` Role.
 
 ### 8) NetworkPolicy
 
@@ -235,11 +260,26 @@ curl http://localhost:8080
 ### Investigate RBAC and permissions
 
 ```bash
+kubectl create serviceaccount dev-reader
+kubectl create token dev-reader
 kubectl auth can-i get pods --as=system:serviceaccount:default:dev-reader
 kubectl auth can-i list pods --as=system:serviceaccount:default:dev-reader
 ```
 
 This helps confirm whether the Role or ClusterRole grants access to a ServiceAccount.
+
+### Set the current context with a ServiceAccount token
+
+When you want to switch the active kube context to use a token-based identity, the usual pattern is:
+
+```bash
+TOKEN=$(kubectl create token dev-reader)
+kubectl config set-credentials dev-reader --token="$TOKEN"
+kubectl config set-context --current --user=dev-reader
+kubectl config current-context
+```
+
+This creates a token for the `dev-reader` ServiceAccount and saves it as the active kubeconfig user. Then `kubectl` commands run using that token identity. This is useful when testing RBAC behavior without using the default admin identity.
 
 ---
 
