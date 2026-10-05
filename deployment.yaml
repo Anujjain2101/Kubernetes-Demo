@@ -46,11 +46,34 @@ spec:
               mountPath: /usr/share/nginx/html/index.html
               subPath: index.html
 
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+
+          startupProbe:
+            httpGet:
+              path: /
+              port: 80
+            failureThreshold: 30
+            periodSeconds: 5
+
           readinessProbe:
             httpGet:
               path: /
               port: 80
             initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
             periodSeconds: 10
 
       volumes:

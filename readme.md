@@ -1,74 +1,330 @@
-# NGINX Kubernetes Demo
+# Kubernetes Demo - Complete Lab Notes
 
-This folder contains Kubernetes manifests for a single-replica NGINX application intended for a local Kind cluster. The app serves a custom HTML page, mounts persistent storage, reads Secret values into environment variables, and is exposed through a NodePort Service.
+This folder contains the Kubernetes manifests used during the lab to understand how multiple resources interact in a cluster. The demo progressed from a basic NGINX application to a more advanced setup with a second app, ingress routing, RBAC, and network policies.
 
-## Files
+The purpose of this lab was to practice:
+- creating Kubernetes manifests
+- applying them to a local Kind cluster
+- investigating scheduling issues
+- checking pod health and service reachability
+- understanding ConfigMaps, Secrets, PV/PVC, Services, Ingress, RBAC, and Network Policies
 
-| File | Resource | Purpose |
+---
+
+## Files currently in the Demo folder
+
+| File | Kind | Purpose |
 | --- | --- | --- |
-| `configmap.yaml` | ConfigMap `nginx-config` | Supplies the `index.html` page mounted into NGINX. |
-| `secret.yaml` | Secret `nginx-secret` | Supplies `USERNAME` and `PASSWORD` values to the container. |
-| `pv.yaml` | PersistentVolume `nginx-pv` | Provides 1 GiB of `hostPath` storage at `/data/nginx` with a `Retain` reclaim policy. |
-| `pvc.yaml` | PersistentVolumeClaim `nginx-pvc` | Requests 1 GiB of `ReadWriteOnce` storage. |
-| `deployment.yaml` | Deployment `nginx-app` | Runs one `nginx:latest` pod, mounts the PVC and ConfigMap, and checks readiness over HTTP. |
-| `external-service.yaml` | NodePort Service `nginx-external` | Routes port 80 to the app and exposes NodePort 30080 inside the Kind cluster. |
+| `configmap.yaml` | ConfigMap | Stores the custom homepage HTML for the main NGINX app. |
+| `deployment.yaml` | Deployment | Runs the main NGINX app with health probes, resource limits, and PVC/ConfigMap mounts. |
+| `external-service.yaml` | Service | Exposes the main app using a NodePort. |
+| `pv.yaml` | PersistentVolume | Defines a hostPath-based persistent volume. |
+| `pvc.yaml` | PersistentVolumeClaim | Requests storage for the main application. |
+| `secret.yaml` | Secret | Stores demo credentials as environment variables. |
+| `app2.yaml` | Deployment + Service | Deploys a second sample app (`app2`) using `hashicorp/http-echo`. |
+| `ingress.yaml` | Ingress | Routes HTTP traffic to the main app and the second app. |
+| `network-policy.yaml` | NetworkPolicy | Allows only pods labeled `app: nginx` to reach the `app2` container. |
+| `role.yaml` | Role | Gives read-only access to pods in the namespace. |
+| `rolebinding.yaml` | RoleBinding | Binds the Role to a ServiceAccount. |
+| `clusterrole.yaml` | ClusterRole | Gives read-only cluster-level access to pods. |
+| `clusterrolebinding.yaml` | ClusterRoleBinding | Binds the cluster role to a ServiceAccount. |
+| `readme.md` | Documentation | Lab notes, concepts, and commands used. |
 
-## Prerequisites
+---
 
-- Docker Desktop running
-- Kind and `kubectl` installed
-- A running Kubernetes cluster and a configured `kubectl` context
+## Core concepts behind the manifests
 
-The sibling `k8s/kind-multinode.yml` and `k8s/readme.md` describe creating the local three-node cluster named `multinode`.
+### 1) ConfigMap
 
-## Deploy
+The main app serves custom HTML content, which is stored in the ConfigMap.
 
-Run these commands from the `k8s/Demo` directory. The Deployment requires a node labeled `app-node=web`; Kind does not add this label automatically. Choose a worker node from `kubectl get nodes` and label it before applying the manifests:
+```yaml
+configMap:
+  name: nginx-config
+```
 
-```powershell
+This is used to avoid hardcoding site content inside the image and makes the app easier to manage and update.
+
+### 2) Secret
+
+The Secret stores values for the environment variables used by the container.
+
+```yaml
+env:
+  - name: APP_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: nginx-secret
+        key: USERNAME
+```
+
+This demonstrates Kubernetes Secret injection. In this lab, the stored values were replaced with placeholder text before publishing to GitHub.
+
+### 3) PersistentVolume and PersistentVolumeClaim
+
+The app uses a PV/PVC pair to persist data on the node filesystem.
+
+```yaml
+hostPath:
+  path: /data/nginx
+```
+
+This allows the NGINX content to survive a pod restart in a local lab environment.
+
+Key idea:
+- PV = the actual storage resource
+- PVC = the storage request made by an app
+
+### 4) Deployment and health probes
+
+The main deployment includes:
+- `replicas: 1`
+- `nodeSelector: app-node=web`
+- `startupProbe`
+- `readinessProbe`
+- `livenessProbe`
+- resource requests and limits
+
+This is used so Kubernetes can determine when the app is ready and when it needs to be restarted.
+
+### 5) Service and NodePort access
+
+The Service exposes the NGINX app through a NodePort.
+
+```yaml
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+```
+
+This allows access from outside the cluster in a local setup.
+
+### 6) Additional app and ingress flow
+
+The lab expanded to a second application:
+- `app2.yaml` creates a sample app using `hashicorp/http-echo`
+- `ingress.yaml` routes requests to `nginx-external` and `app2-service`
+
+This introduced the concept of application routing and layered traffic flow in Kubernetes.
+
+### 7) RBAC (Role and ClusterRole)
+
+The RBAC manifests define which identities can read pod information:
+- `role.yaml` and `rolebinding.yaml` apply within a namespace
+- `clusterrole.yaml` and `clusterrolebinding.yaml` apply cluster-wide
+
+This demonstrates how Kubernetes authorization is enforced through RBAC rules.
+
+### 8) NetworkPolicy
+
+The NetworkPolicy allows only the NGINX pod to communicate with `app2`.
+
+```yaml
+podSelector:
+  matchLabels:
+    app: app2
+```
+
+This shows how Kubernetes can restrict which workloads can access a pod, which is an important security pattern.
+
+---
+
+## Commands used during the lab
+
+The following are the commands used while creating, applying, investigating, and testing the manifests.
+
+### Create and verify the Kind cluster
+
+```bash
+kind create cluster --name multinode --config kind-multinode.yml
 kubectl config current-context
+kubectl get nodes -o wide
+kubectl cluster-info
+```
+
+### Label the worker node for the main app
+
+```bash
 kubectl get nodes
 kubectl label node <worker-node-name> app-node=web
+```
+
+### Apply the main manifests
+
+```bash
 kubectl apply -f .
 ```
 
-Check the rollout and storage binding:
+or selectively:
 
-```powershell
-kubectl rollout status deployment/nginx-app
-kubectl get pods,services,pv,pvc
+```bash
+kubectl apply -f configmap.yaml
+kubectl apply -f pv.yaml
+kubectl apply -f pvc.yaml
+kubectl apply -f secret.yaml
+kubectl apply -f deployment.yaml
+kubectl apply -f external-service.yaml
 ```
 
-The PVC must bind to the PV before the pod can become ready. The PV declares storage class `standard`, while the PVC leaves its storage class unspecified. If the PVC remains `Pending`, explicitly set `storageClassName: standard` in `pvc.yaml` (or make the PV and PVC storage-class settings match your cluster), then apply the updated manifest.
+### Apply the extra advanced manifests
 
-## Test the page
+```bash
+kubectl apply -f app2.yaml
+kubectl apply -f ingress.yaml
+kubectl apply -f network-policy.yaml
+kubectl apply -f role.yaml
+kubectl apply -f rolebinding.yaml
+kubectl apply -f clusterrole.yaml
+kubectl apply -f clusterrolebinding.yaml
+```
 
-Port-forward the Service and open `http://localhost:8080` in a browser:
+### Check resource state
 
-```powershell
+```bash
+kubectl get pods
+kubectl get deployment
+kubectl get svc
+kubectl get ingress
+kubectl get networkpolicy
+kubectl get pv,pvc
+kubectl get role,rolebinding
+kubectl get clusterrole,clusterrolebinding
+```
+
+### Inspect details when things do not work
+
+```bash
+kubectl describe pod nginx-app
+kubectl describe pod app2
+kubectl describe svc nginx-external
+kubectl describe svc app2-service
+kubectl describe ingress nginx-ingress
+kubectl describe pv nginx-pv
+kubectl describe pvc nginx-pvc
+kubectl get events --sort-by=.metadata.creationTimestamp
+```
+
+### Check logs
+
+```bash
+kubectl logs deployment/nginx-app
+kubectl logs deployment/app2
+```
+
+### Access the app locally
+
+```bash
 kubectl port-forward service/nginx-external 8080:80
 ```
 
-The page content comes from the `index.html` entry in `configmap.yaml`. The Deployment's readiness probe checks `/` on port 80.
+Then open:
 
-## Configuration and security notes
-
-- `deployment.yaml` selects nodes with the label `app-node=web`; without a matching node, the pod remains unscheduled.
-- The Deployment reads the Secret keys into `APP_USERNAME` and `APP_PASSWORD`. The stock NGINX image does not use these variables for authentication; they are only present in the container environment.
-- `secret.yaml` contains placeholder values only. Replace them before deploying, or create the Secret outside the repository. Never commit real credentials.
-- `hostPath` storage is local to a Kind node and is suitable for this local demo, not portable or highly available production storage.
-- The NodePort is 30080 inside the cluster. Port-forwarding is used above to access the app from the host without additional Kind port mappings.
-
-## Remove the resources
-
-Run from this directory:
-
-```powershell
-kubectl delete -f .
+```text
+http://localhost:8080
 ```
 
-Because the PV has reclaim policy `Retain`, deleting the claim does not automatically erase the data stored at `/data/nginx` on the Kind node. Remove the Kind cluster separately when you no longer need it:
+To validate the response:
 
-```powershell
+```bash
+curl http://localhost:8080
+```
+
+### Investigate RBAC and permissions
+
+```bash
+kubectl auth can-i get pods --as=system:serviceaccount:default:dev-reader
+kubectl auth can-i list pods --as=system:serviceaccount:default:dev-reader
+```
+
+This helps confirm whether the Role or ClusterRole grants access to a ServiceAccount.
+
+---
+
+## Troubleshooting lessons from this lab
+
+### 1) Pending pod because of node selector
+
+The main deployment used:
+
+```yaml
+nodeSelector:
+  app-node: web
+```
+
+If the node is not labeled, the pod stays Pending. The fix is:
+
+```bash
+kubectl label node <worker-node-name> app-node=web
+```
+
+### 2) Pending PVC because of storage binding
+
+If the PVC does not bind to the PV, the app waits for storage. In this lab, the cause was usually mismatch between the storage class or the PV/PVC configuration.
+
+Check:
+
+```bash
+kubectl get pv,pvc
+kubectl describe pvc nginx-pvc
+kubectl describe pv nginx-pv
+```
+
+### 3) Ingress not routing traffic
+
+Ingress needs a working ingress controller in the cluster. If the rule is created but not working, investigate:
+
+```bash
+kubectl get ingress
+kubectl describe ingress nginx-ingress
+kubectl get pods -n ingress-nginx
+```
+
+### 4) Network policy blocks communication
+
+The NetworkPolicy restricts traffic to the `app2` pod. If access fails, inspect the policy and the pod labels.
+
+```bash
+kubectl get networkpolicy
+kubectl describe networkpolicy allow-nginx-to-app2
+kubectl get pods --show-labels
+```
+
+### 5) RBAC denial
+
+If a ServiceAccount cannot read pods, investigate the Role/RoleBinding or ClusterRole/ClusterRoleBinding configuration.
+
+```bash
+kubectl auth can-i get pods --as=system:serviceaccount:default:dev-reader
+kubectl describe rolebinding pod-reader-binding
+kubectl describe clusterrolebinding pod-cluster-reader-binding
+```
+
+---
+
+## Cleanup commands
+
+When the demo is complete:
+
+```bash
+kubectl delete -f .
 kind delete cluster --name multinode
 ```
+
+This removes all resources created during the lab and deletes the Kind cluster itself.
+
+---
+
+## Final takeaway
+
+This Demo folder is a full learning path for Kubernetes basics and intermediate concepts. It demonstrated:
+- configuration management with ConfigMaps and Secrets
+- persistence with PV and PVC
+- pod lifecycle and health checks with Deployment probes
+- service exposure with NodePort and Ingress
+- security with RBAC and NetworkPolicy
+- troubleshooting using `kubectl` and Kubernetes events
+
+This lab is a strong foundation before moving to production patterns such as Helm charts, ingress controllers, storage classes, and advanced security best practices.
